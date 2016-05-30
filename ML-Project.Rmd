@@ -1,0 +1,130 @@
+---
+title: "Predicting the Quality of Exercise"
+output: html_document
+date: "May 24, 2016"
+---
+
+*For this report we will use the "randomForest" library and we need to make sure that it is loaded.
+
+```{r warning=FALSE, message=FALSE}
+library(randomForest)
+```
+
+
+#Overview
+
+In this report we are trying to build a model to predict the manner in which people do exercise. The predictors are the measurements from the accelerometers on arms, forearms, belt and dumbbell. The training dataset (source: http://groupware.les.inf.puc-rio.br/har) is a collection of around 20000 rows of data on 6 different persons. Each row provides the measurements from the accelerometers (predictors) and the manner in which the exercise has been done (output). The quality of exercise is classified in 5 different groups, called A, B, C, D, E. 
+
+#Cleaning data and extracting relevant predictors
+First of we load the data and take a look at the dimensions. Note that some fields are "NA" and some of them are empty. We assume both as NA.
+
+```{r}
+data <- read.csv("pml-training.csv", na.strings =c("NA", ""))
+dim(data)
+```
+The goal is to predict the "classe" variable. For the first exploratory data analysis, let's see if there is any difference between the 6 persons who did the exercise. On the other hand, we want to make sure if the name of the person ("user_name" variable) has anything to do with the quality of the exercise ("classe" variable):
+
+```{r}
+cor(as.numeric(as.factor(data$user_name)), as.numeric(as.factor(data$classe)))
+```
+
+The correlation coefficient is very small so we can assume that the "user_name" (first columns) is not a relevant predictor. In addition, by a quick exploration of data, we will realize that: 
+
+* The first column is the row number and in not relevant.
+* The columns 3 to 5 are information about the time that the exercise which has been done.
+* Some of the columns are almost always equal to "NA".  
+
+Therefore, let's remove the first 5 columns and the columns with the many "NA" value (We can set the criteria that if 90 percent of a column is equal to "NA", we will remove that column):
+
+```{r}
+col <- numeric(0)
+for (i in 6:dim(data)[2]){
+  if ( sum(is.na(data[ , i])) > (0.9*dim(data)[1]) )  {next}
+  col <- c(col ,i)
+}
+data <- data[ , col]
+
+dim(data)
+```
+
+Now, we have only 54 predictors. Note that the last column in the data variable is the "classe" variable.
+
+Now, let's separate the predictor and output into two different data sets and make all the predictors numeric:
+
+```{r}
+x_data <- data[ , 1:dim(data)[2]-1]
+y_data <- data[ , dim(data)[2]]
+x_data <- as.data.frame(lapply(x_data, as.numeric))
+```
+
+It is possible to reduce the dimension of the data by doing "Principal Component Analysis". We can show that 99% of the variance in the data can be explained by 19 principal components.
+
+```{r}
+pca <- prcomp(x_data)
+s <- cumsum((pca$sdev)^2)/sum(pca$sdev^2)
+
+print(sum(s<0.99)+1)
+```
+
+However, since the total number of predictors are not that much large (54), we will keep all of them and won't transform the data to reduce the dimension. 
+
+#Building a Random Forest with Cross-Validation
+Since we are facing a categorical problem, random forest could be a very accurate method in terms of prediction. Therefore, we build a random forest and will do a 10-fold cross-validation to measure the expected out of sample error. We first combine the transformed x-data and y-data into a data set and then will make an array which is the random permutation of the numbers between 1 to the number of rows ("randsamp" variable). Then we divide this variable into 10 parts with equal lengths. Each part is a random selection of 10% of the data which can be used as the test dataset for the cross validation. We measure the error by making a table of predicted versus actual values in the test set and count the number of off-diagonal terms. The following code will do the analysis:
+
+```{r  tidy=FALSE , results="hide", cache=TRUE}
+
+data<-cbind(x_data, classe=y_data)
+
+d <- dim(data)
+set.seed(1)
+randsamp <- sample(d[1])
+
+cv=numeric(0)
+for (k in 1:10){
+  
+  inTest <- randsamp[((k-1)*d[1]/10 + 1) : (k*d[1]/10)]     #Partitioning data into 
+  train_data <- data[-inTest , ]                            #test and train sets
+  test_data <- data[inTest , ]
+  
+  model <- randomForest(classe~. , data = train_data,       
+                          mtry = 7, ntree = 50, importance = TRUE)       #Building model
+  pred <- predict(model, newdata = test_data[ , -d[2]])                    #and prediction
+
+  con_table <- table(pred, test_data$classe)                #measuring error rate
+  err = 1 - sum(diag(con_table))/length(pred)
+  cv <- c(cv, err)
+}
+```
+
+Note that we set the number of predictors to be considered at each split equal to 7 (square root of the total number of predictors). We also set the number of trees equal to 50. This number could be smaller or larger, but as long as the number of trees are not very small, it cannot change the final result that much. The error rate of the model is equal to the mean of the "cv" variable.
+
+```{r}
+mean(cv)
+```
+
+As we can see the model performs interestingly well and the error rate is less than a quarter of a percent. The final model could be built based on the whole data set. Therefore:
+
+```{r  results="hide", cache=TRUE}
+Final_Model <- randomForest(classe~. , data = data, mtry = 7, ntree = 50, importance = TRUE) 
+```
+
+#Applying the model on the test data
+Now, let us apply the results on the 20 rows of the test data. We first, clean the data and extract the relevant variables as we did for the training data. The following code will perform the transformations:
+
+```{r}
+test_data <- read.csv("pml-testing.csv")
+test_data <- test_data[ , col]
+x_test_data <- test_data[ , 1:dim(test_data)[2]-1]
+y_test_data <- test_data[ , dim(test_data)[2]]
+x_test_data <- as.data.frame(lapply(x_test_data, as.numeric))
+```
+
+Now we can aplly our model on the data to predict the outputs
+
+```{r}
+pred<-predict(Final_Model, newdata = x_test_data)
+pred
+```
+
+#Conclusion
+We can build a model using the random forest method to predict the quality of exercise and estimate the accuracy of the model using cross-validation. The model was built based on the majority of the predictors and the accuracy was more than 99% which is very high. We can conclude that, based on the data from the accelerometers it is possible to predict the manner in which a person does the exercise with a very small error.
